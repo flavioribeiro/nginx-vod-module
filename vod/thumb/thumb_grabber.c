@@ -564,7 +564,7 @@ thumb_grabber_process(void* context)
 			rc = state->cur_frame_part.frames_source->start_frame(
 				state->cur_frame_part.frames_source_context,
 				state->cur_frame,
-				ULLONG_MAX);
+				NULL);
 			if (rc != VOD_OK)
 			{
 				return rc;
@@ -649,4 +649,4 @@ thumb_grabber_process(void* context)
 	}
 }
 
-#endif // VOD_HAVE_LIB_AV_CODEC
+#endif // (VOD_HAVE_LIB_AV_CODEC)

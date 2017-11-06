@@ -19,6 +19,9 @@
 #define vod_is_bit_set(mask, index) (((mask)[(index) >> 3] >> ((index) & 7)) & 1)
 #define vod_set_bit(mask, index) (mask)[(index) >> 3] |= 1 << ((index) & 7)
 
+#define vod_no_flag_set(mask, f) (((mask) & (f)) == 0)
+#define vod_all_flags_set(mask, f) (((mask) & (f)) == (f))
+
 // Note: comparing the pointers since in the case of labels if both were derived by the language, 
 //		they will have the same pointer and we can skip the memcmp
 #define vod_str_equals(l1, l2) \
@@ -93,10 +96,11 @@ void vod_log_error(vod_uint_t level, vod_log_t *log, int err,
 #define VOD_MAX_SIZE_T_VALUE NGX_MAX_SIZE_T_VALUE
 #define VOD_MAX_OFF_T_VALUE NGX_MAX_OFF_T_VALUE
 
-#define VOD_HAVE_LIB_AV_CODEC NGX_HAVE_LIB_AV_CODEC 
+#define VOD_HAVE_LIB_AV_CODEC NGX_HAVE_LIB_AV_CODEC
 #define VOD_HAVE_LIB_AV_FILTER NGX_HAVE_LIB_AV_FILTER
 #define VOD_HAVE_OPENSSL_EVP NGX_HAVE_OPENSSL_EVP
 #define VOD_HAVE_LIBXML2 NGX_HAVE_LIBXML2
+#define VOD_HAVE_ICONV NGX_HAVE_ICONV
 
 #if (VOD_HAVE_LIB_AV_CODEC)
 #include <libavcodec/avcodec.h>
@@ -248,6 +252,8 @@ void vod_log_error(vod_uint_t level, vod_log_t *log, int err,
 #define vod_log_debug4(level, log, err, fmt, arg1, arg2, arg3, arg4) \
 		ngx_log_debug4(level, log, err, fmt, arg1, arg2, arg3, arg4)
 
+#define vod_errno ngx_errno
+
 #if (NGX_DEBUG)
 #define VOD_DEBUG (1)
 #else
@@ -258,6 +264,7 @@ typedef intptr_t bool_t;
 typedef ngx_int_t vod_status_t;
 typedef ngx_int_t vod_int_t;
 typedef ngx_uint_t vod_uint_t;
+typedef ngx_err_t vod_err_t;
 
 #endif	// VOD_STAND_ALONE
 
@@ -349,5 +356,7 @@ enum {
 int vod_get_int_print_len(uint64_t n);
 
 uint32_t vod_get_number_of_set_bits(uint32_t i);
+
+u_char* vod_append_hex_string(u_char* p, const u_char* buffer, uint32_t buffer_size);
 
 #endif // __COMMON_H__

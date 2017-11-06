@@ -2,7 +2,6 @@
 
 // constants
 #define MAX_SEGMENT_COUNT (100000)
-#define MIN_SEGMENT_DURATION (500)
 
 // typedefs
 typedef struct {
@@ -49,12 +48,11 @@ segmenter_init_config(segmenter_conf_t* conf, vod_pool_t* pool)
 	uint32_t i;
 	int32_t cur_duration;
 
-	if (conf->segment_duration < MIN_SEGMENT_DURATION)
+	if (conf->segment_duration < MIN_SEGMENT_DURATION || 
+		conf->segment_duration > MAX_SEGMENT_DURATION)
 	{
 		return VOD_BAD_DATA;
 	}
-
-	conf->max_segment_duration = conf->segment_duration;
 
 	if (conf->get_segment_durations == segmenter_get_segment_durations_accurate)
 	{
@@ -69,8 +67,11 @@ segmenter_init_config(segmenter_conf_t* conf, vod_pool_t* pool)
 		conf->parse_type = 0;
 	}
 
+	conf->max_bootstrap_segment_duration = 0;
+
 	if (conf->bootstrap_segments == NULL)
 	{
+		conf->max_segment_duration = conf->segment_duration;
 		conf->bootstrap_segments_count = 0;
 		conf->bootstrap_segments_durations = NULL;
 		conf->bootstrap_segments_total_duration = 0;
@@ -108,11 +109,15 @@ segmenter_init_config(segmenter_conf_t* conf, vod_pool_t* pool)
 		cur_pos += conf->bootstrap_segments_durations[i];
 		conf->bootstrap_segments_end[i] = cur_pos;
 
-		if ((uint32_t)cur_duration > conf->max_segment_duration)
+		if ((uint32_t)cur_duration > conf->max_bootstrap_segment_duration)
 		{
-			conf->max_segment_duration = cur_duration;
+			conf->max_bootstrap_segment_duration = cur_duration;
 		}
 	}
+
+	conf->max_segment_duration = vod_max(conf->segment_duration, 
+		conf->max_bootstrap_segment_duration);
+
 	conf->bootstrap_segments_total_duration = cur_pos;
 
 	return VOD_OK;
@@ -513,6 +518,7 @@ segmenter_get_start_end_ranges_no_discontinuity(
 	uint32_t* clip_durations = params->timing.durations;
 	uint32_t* end_duration = clip_durations + params->timing.total_count;
 	uint32_t* cur_duration;
+	uint32_t clip_initial_segment_index;
 	uint32_t segment_count;
 	uint32_t index;
 
@@ -668,6 +674,11 @@ segmenter_get_start_end_ranges_no_discontinuity(
 	}
 
 	result->clip_time += segment_base_time;
+
+	clip_initial_segment_index = segmenter_get_segment_index_no_discontinuity(
+		params->conf,
+		cur_clip_range->original_clip_time - segment_base_time);
+	result->clip_relative_segment_index = params->segment_index - clip_initial_segment_index;
 	
 	return VOD_OK;
 }
@@ -688,6 +699,7 @@ segmenter_get_start_end_ranges_discontinuity(
 	uint64_t clip_time;
 	uint64_t start;
 	uint64_t end;
+	uint32_t clip_initial_segment_index;
 	uint32_t last_segment_limit;
 	uint32_t cur_segment_limit;
 	uint32_t segment_index = params->segment_index;
@@ -752,6 +764,7 @@ segmenter_get_start_end_ranges_discontinuity(
 
 		clip_index = cur_duration - params->timing.durations;
 		clip_time = params->timing.times[clip_index];
+		clip_initial_segment_index = last_segment_limit;
 	}
 	else
 	{
@@ -786,6 +799,10 @@ segmenter_get_start_end_ranges_discontinuity(
 
 		clip_index = cur_duration - params->timing.durations;
 		clip_start_offset = clip_time;
+
+		clip_initial_segment_index = segmenter_get_segment_index_no_discontinuity(
+			conf,
+			params->timing.original_times[clip_index] - params->timing.segment_base_time);
 
 		cur_segment_limit = conf->get_segment_count(conf, clip_time + clip_duration - params->timing.segment_base_time);
 		if (cur_segment_limit == INVALID_SEGMENT_COUNT)
@@ -872,6 +889,7 @@ segmenter_get_start_end_ranges_discontinuity(
 	result->min_clip_index = result->max_clip_index = clip_index;
 	result->clip_count = 1;
 	result->clip_ranges = cur_clip_range;
+	result->clip_relative_segment_index = segment_index - clip_initial_segment_index;
 
 	return VOD_OK;
 }

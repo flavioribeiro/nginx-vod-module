@@ -6,13 +6,13 @@
 #define THIS_FILTER (MEDIA_FILTER_ENCRYPT)
 #define get_context(ctx) ((frame_encrypt_filter_state_t*)ctx->context[THIS_FILTER])
 
-#include <openssl/aes.h>
 #include "aes_cbc_encrypt.h"
 
 #define FRAME_ENCRYPT_KEY_SIZE (16)
 #define CLEAR_LEAD_SIZE (16)
 #define ENCRYPTED_BUFFER_SIZE (256)
 
+// typedefs
 typedef struct
 {
 	// fixed input data
@@ -22,7 +22,7 @@ typedef struct
 	u_char key[FRAME_ENCRYPT_KEY_SIZE];
 
 	// state
-	EVP_CIPHER_CTX cipher;
+	EVP_CIPHER_CTX* cipher;
 	uint32_t cur_offset;
 	uint32_t max_encrypt_offset;
 } frame_encrypt_filter_state_t;
@@ -38,7 +38,7 @@ frame_encrypt_start_frame(media_filter_context_t* context, output_frame_t* frame
 	if (state->max_encrypt_offset > CLEAR_LEAD_SIZE)
 	{
 		// reset the IV (it is ok to call EVP_EncryptInit_ex several times without cleanup)
-		if (1 != EVP_EncryptInit_ex(&state->cipher, EVP_aes_128_cbc(), NULL, state->key, state->iv))
+		if (1 != EVP_EncryptInit_ex(state->cipher, EVP_aes_128_cbc(), NULL, state->key, state->iv))
 		{
 			vod_log_error(VOD_LOG_ERR, context->request_context->log, 0,
 				"frame_encrypt_start_frame: EVP_EncryptInit_ex failed");
@@ -47,6 +47,15 @@ frame_encrypt_start_frame(media_filter_context_t* context, output_frame_t* frame
 	}
 
 	return state->start_frame(context, frame);
+}
+
+void
+frame_encrypt_start_sub_frame(media_filter_context_t* context, uint32_t size)
+{
+	frame_encrypt_filter_state_t* state = get_context(context);
+
+	state->cur_offset = 0;
+	state->max_encrypt_offset = size - size % AES_BLOCK_SIZE;
 }
 
 static vod_status_t
@@ -83,7 +92,7 @@ frame_encrypt_write(media_filter_context_t* context, const u_char* buffer, uint3
 		// encrypt as much as possible
 		cur_size = vod_min(sizeof(encrypted_buffer), offset_limit - state->cur_offset);
 
-		if (1 != EVP_EncryptUpdate(&state->cipher, encrypted_buffer, &out_size, buffer, cur_size))
+		if (1 != EVP_EncryptUpdate(state->cipher, encrypted_buffer, &out_size, buffer, cur_size))
 		{
 			vod_log_error(VOD_LOG_ERR, context->request_context->log, 0,
 				"frame_encrypt_write: EVP_EncryptUpdate failed");
@@ -118,7 +127,7 @@ frame_encrypt_write(media_filter_context_t* context, const u_char* buffer, uint3
 static void
 frame_encrypt_cleanup(frame_encrypt_filter_state_t* state)
 {
-	EVP_CIPHER_CTX_cleanup(&state->cipher);
+	EVP_CIPHER_CTX_free(state->cipher);
 }
 
 vod_status_t
@@ -148,14 +157,20 @@ frame_encrypt_filter_init(
 			"frame_encrypt_filter_init: vod_pool_cleanup_add failed");
 		return VOD_ALLOC_FAILED;
 	}
+	
+	state->cipher = EVP_CIPHER_CTX_new();
+	if (state->cipher == NULL)
+	{
+		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
+			"frame_encrypt_filter_init: EVP_CIPHER_CTX_new failed");
+		return VOD_ALLOC_FAILED;
+	}
 
 	cln->handler = (vod_pool_cleanup_pt)frame_encrypt_cleanup;
 	cln->data = state;
 
 	vod_memcpy(state->iv, encryption_params->iv, sizeof(state->iv));
 	vod_memcpy(state->key, encryption_params->key, sizeof(state->key));
-
-	EVP_CIPHER_CTX_init(&state->cipher);
 
 	// save required functions
 	state->start_frame = filter->start_frame;
@@ -181,6 +196,11 @@ frame_encrypt_filter_init(
 	hls_encryption_params_t* encryption_params)
 {
 	return VOD_UNEXPECTED;
+}
+
+void
+frame_encrypt_start_sub_frame(media_filter_context_t* context, uint32_t size)
+{
 }
 
 #endif //(VOD_HAVE_OPENSSL_EVP)

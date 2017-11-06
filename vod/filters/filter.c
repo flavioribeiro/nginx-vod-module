@@ -27,6 +27,8 @@ typedef struct {
 	media_clip_filtered_t* output_clip;
 	media_track_t* cur_track;
 	void* audio_filter;
+	uint32_t max_frame_count;
+	uint32_t output_codec_id;
 } apply_filters_state_t;
 
 static void
@@ -249,7 +251,8 @@ filter_validate_consistent_codecs(
 vod_status_t
 filter_init_filtered_clips(
 	request_context_t* request_context,
-	media_set_t* media_set)
+	media_set_t* media_set,
+	bool_t parsed_frames)
 {
 	filters_init_state_t init_state;
 	media_clip_filtered_t* output_clip;
@@ -425,7 +428,7 @@ filter_init_filtered_clips(
 						init_state.audio_reference_track_speed_denom);
 				}
 
-				if (init_state.has_audio_frames)
+				if (!parsed_frames || init_state.has_audio_frames)
 				{
 					new_track->source_clip = input_clip;
 					media_set->audio_filtering_needed = TRUE;
@@ -471,6 +474,8 @@ filter_init_state(
 	request_context_t* request_context,
 	read_cache_state_t* read_cache_state,
 	media_set_t* media_set,
+	uint32_t max_frame_count,
+	uint32_t output_codec_id,
 	void** context)
 {
 	apply_filters_state_t* state;
@@ -489,6 +494,8 @@ filter_init_state(
 	state->sequence = media_set->sequences;
 	state->output_clip = state->sequence->filtered_clips;
 	state->cur_track = state->output_clip->first_track;
+	state->max_frame_count = max_frame_count;
+	state->output_codec_id = output_codec_id;
 	state->audio_filter = NULL;
 
 	*context = state;
@@ -551,6 +558,8 @@ filter_run_state_machine(void* context)
 			state->sequence,
 			state->cur_track->source_clip,
 			state->cur_track,
+			state->max_frame_count,
+			state->output_codec_id,
 			&cache_buffer_count,
 			&state->audio_filter);
 		if (rc != VOD_OK)

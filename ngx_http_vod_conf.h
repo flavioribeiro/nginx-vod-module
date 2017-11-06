@@ -9,6 +9,7 @@
 #include "ngx_http_vod_hls_conf.h"
 #include "ngx_http_vod_mss_conf.h"
 #include "ngx_http_vod_thumb_conf.h"
+#include "ngx_http_vod_volume_map_conf.h"
 #include "vod/segmenter.h"
 
 // enum
@@ -39,6 +40,7 @@ struct ngx_http_vod_loc_conf_s {
 	ngx_str_t multi_uri_suffix;
 	segmenter_conf_t segmenter;
 	ngx_http_complex_value_t *secret_key;
+	ngx_http_complex_value_t *encryption_iv_seed;
 	ngx_http_complex_value_t *base_url;
 	ngx_http_complex_value_t *segments_base_url;
 	ngx_buffer_cache_t* metadata_cache;
@@ -50,6 +52,8 @@ struct ngx_http_vod_loc_conf_s {
 	buffer_pool_t* output_buffer_pool;
 	size_t max_upstream_headers_size;
 	ngx_flag_t ignore_edit_list;
+	ngx_flag_t parse_hdlr_name;
+	int parse_flags;
 	ngx_http_complex_value_t *upstream_extra_args;
 	ngx_buffer_cache_t* mapping_cache[CACHE_TYPE_COUNT];
 	ngx_buffer_cache_t* dynamic_mapping_cache;
@@ -83,6 +87,7 @@ struct ngx_http_vod_loc_conf_s {
 	ngx_str_t clip_to_param_name;
 	ngx_str_t clip_from_param_name;
 	ngx_str_t tracks_param_name;
+	ngx_str_t time_shift_param_name;
 	ngx_str_t speed_param_name;
 	ngx_str_t lang_param_name;
 
@@ -102,6 +107,7 @@ struct ngx_http_vod_loc_conf_s {
 	ngx_http_vod_hls_loc_conf_t hls;
 	ngx_http_vod_mss_loc_conf_t mss;
 	ngx_http_vod_thumb_loc_conf_t thumb;
+	ngx_http_vod_volume_map_loc_conf_t volume_map;
 };
 
 typedef struct ngx_http_vod_loc_conf_s ngx_http_vod_loc_conf_t;

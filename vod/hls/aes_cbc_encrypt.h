@@ -10,7 +10,7 @@ typedef struct {
 	write_callback_t callback;
 	void* callback_context;
 #if (VOD_HAVE_OPENSSL_EVP)
-	EVP_CIPHER_CTX cipher;
+	EVP_CIPHER_CTX* cipher;
 #endif //(VOD_HAVE_OPENSSL_EVP)
 	u_char last_block[AES_BLOCK_SIZE];
 } aes_cbc_encrypt_context_t;
@@ -34,7 +34,5 @@ vod_status_t aes_cbc_encrypt_write(
 	aes_cbc_encrypt_context_t* ctx, 
 	u_char* buffer, 
 	uint32_t size);
-
-vod_status_t aes_cbc_encrypt_flush(aes_cbc_encrypt_context_t* ctx);
 
 #endif // __AES_CBC_ENCRYPT_H__

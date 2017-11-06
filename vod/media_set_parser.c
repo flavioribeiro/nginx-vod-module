@@ -16,6 +16,7 @@
 enum {
 	MEDIA_SET_PARAM_ID,
 	MEDIA_SET_PARAM_DISCONTINUITY,
+	MEDIA_SET_PARAM_SEGMENT_DURATION,
 	MEDIA_SET_PARAM_CONSISTENT_SEQUENCE_MEDIA_INFO,
 	MEDIA_SET_PARAM_DURATIONS,
 	MEDIA_SET_PARAM_SEQUENCES,
@@ -127,6 +128,7 @@ static json_object_key_def_t media_clip_params[] = {
 static json_object_key_def_t media_set_params[] = {
 	{ vod_string("id"),								VOD_JSON_STRING,MEDIA_SET_PARAM_ID },
 	{ vod_string("discontinuity"),					VOD_JSON_BOOL,	MEDIA_SET_PARAM_DISCONTINUITY },
+	{ vod_string("segmentDuration"),				VOD_JSON_INT,	MEDIA_SET_PARAM_SEGMENT_DURATION },
 	{ vod_string("consistentSequenceMediaInfo"),	VOD_JSON_BOOL,	MEDIA_SET_PARAM_CONSISTENT_SEQUENCE_MEDIA_INFO },
 	{ vod_string("durations"),						VOD_JSON_ARRAY, MEDIA_SET_PARAM_DURATIONS },
 	{ vod_string("sequences"),						VOD_JSON_ARRAY,	MEDIA_SET_PARAM_SEQUENCES },
@@ -341,14 +343,14 @@ media_set_parse_language(
 	request_context_t* request_context = *(request_context_t**)ctx;
 	language_id_t result;
 
-	if (value->v.str.len < LANG_ISO639_2_LEN)
+	if (value->v.str.len < LANG_ISO639_3_LEN)
 	{
 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
 			"media_set_parse_language: invalid language string length \"%V\"", &value->v.str);
 		return VOD_BAD_MAPPING;
 	}
 
-	result = lang_parse_iso639_2_code(iso639_2_str_to_int(value->v.str.data));
+	result = lang_parse_iso639_3_code(iso639_3_str_to_int(value->v.str.data));
 	if (result == 0)
 	{
 		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
@@ -689,6 +691,24 @@ media_set_parse_filter_sources(
 	return VOD_OK;
 }
 
+static bool_t
+media_set_sequence_id_exists(request_params_t* request_params, vod_str_t* id)
+{
+	vod_str_t* cur_sequence_id = request_params->sequence_ids;
+	vod_str_t* last_sequence_id = cur_sequence_id + MAX_SEQUENCE_IDS;
+
+	for (; cur_sequence_id < last_sequence_id && cur_sequence_id->len != 0; cur_sequence_id++)
+	{
+		if (id->len == cur_sequence_id->len &&
+			vod_memcmp(id->data, cur_sequence_id->data, cur_sequence_id->len) == 0)
+		{
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
 static vod_status_t
 media_set_parse_sequences(
 	request_context_t* request_context,
@@ -718,8 +738,15 @@ media_set_parse_sequences(
 		return VOD_BAD_MAPPING;
 	}
 
-	required_sequences_num = vod_get_number_of_set_bits(request_params->sequences_mask);
-	required_sequences_num = vod_min(array->count, required_sequences_num);
+	if (request_params->sequence_ids[0].len == 0)
+	{
+		required_sequences_num = vod_get_number_of_set_bits(request_params->sequences_mask);
+		required_sequences_num = vod_min(array->count, required_sequences_num);
+	}
+	else
+	{
+		required_sequences_num = array->count;
+	}
 
 	cur_output = vod_alloc(
 		request_context->pool, 
@@ -751,7 +778,8 @@ media_set_parse_sequences(
 			cur_pos = part->first;
 		}
 
-		if ((request_params->sequences_mask & (1 << index)) == 0)
+		if ((request_params->sequences_mask & (1 << index)) == 0 &&
+			request_params->sequence_ids[0].len == 0)
 		{
 			continue;
 		}
@@ -782,9 +810,8 @@ media_set_parse_sequences(
 			return VOD_BAD_MAPPING;
 		}
 
-		if (request_params->sequence_id.len != 0 &&
-			(cur_output->id.len != request_params->sequence_id.len ||
-			vod_memcmp(cur_output->id.data, request_params->sequence_id.data, cur_output->id.len) != 0))
+		if ((request_params->sequences_mask & (1 << index)) == 0 &&
+			!media_set_sequence_id_exists(request_params, &cur_output->id))
 		{
 			continue;
 		}
@@ -1788,6 +1815,41 @@ media_set_end_relative_offset_to_absolute(
 	return timing->times[clip_index] + clip_duration - time_left;
 }
 
+static vod_status_t
+media_set_parse_segment_duration(
+	request_context_t* request_context,
+	int64_t segment_duration,
+	segmenter_conf_t** result)
+{
+	segmenter_conf_t* segmenter;
+
+	if (segment_duration < MIN_SEGMENT_DURATION ||
+		segment_duration > MAX_SEGMENT_DURATION)
+	{
+		vod_log_error(VOD_LOG_ERR, request_context->log, 0,
+			"media_set_parse_segment_duration: invalid segment duration %L", 
+			segment_duration);
+		return VOD_BAD_MAPPING;
+	}
+
+	segmenter = vod_alloc(request_context->pool, sizeof(*segmenter));
+	if (segmenter == NULL)
+	{
+		vod_log_debug0(VOD_LOG_DEBUG_LEVEL, request_context->log, 0,
+			"media_set_parse_segment_duration: vod_alloc failed");
+		return VOD_ALLOC_FAILED;
+	}
+
+	*segmenter = **result;
+	segmenter->segment_duration = segment_duration;
+	segmenter->max_segment_duration = vod_max(segment_duration, 
+		segmenter->max_bootstrap_segment_duration);
+
+	*result = segmenter;
+
+	return VOD_OK;
+}
+
 vod_status_t
 media_set_parse_json(
 	request_context_t* request_context, 
@@ -1840,10 +1902,23 @@ media_set_parse_json(
 	}
 
 	vod_memzero(result, sizeof(*result));
-	result->segmenter_conf = segmenter;
 	result->uri = *uri;
 	result->timing.segment_base_time = SEGMENT_BASE_TIME_RELATIVE;
 	result->version = request_params->version;
+
+	if (params[MEDIA_SET_PARAM_SEGMENT_DURATION] != NULL)
+	{
+		rc = media_set_parse_segment_duration(
+			request_context,
+			params[MEDIA_SET_PARAM_SEGMENT_DURATION]->v.num.num,
+			&segmenter);
+		if (rc != VOD_OK)
+		{
+			return rc;
+		}
+	}
+
+	result->segmenter_conf = segmenter;
 
 	if (params[MEDIA_SET_PARAM_ID] != NULL)
 	{
@@ -2134,6 +2209,8 @@ media_set_parse_json(
 
 				}
 			}
+
+			result->initial_segment_clip_relative_index = context.clip_ranges.clip_relative_segment_index;
 		}
 		else
 		{

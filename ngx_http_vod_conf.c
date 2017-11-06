@@ -83,6 +83,7 @@ ngx_http_vod_create_loc_conf(ngx_conf_t *cf)
 	conf->cache_buffer_size = NGX_CONF_UNSET_SIZE;
 	conf->max_upstream_headers_size = NGX_CONF_UNSET_SIZE;
 	conf->ignore_edit_list = NGX_CONF_UNSET;
+	conf->parse_hdlr_name = NGX_CONF_UNSET;
 	conf->max_mapping_response_size = NGX_CONF_UNSET_SIZE;
 
 	conf->metadata_cache = NGX_CONF_UNSET_PTR;
@@ -163,6 +164,11 @@ ngx_http_vod_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 		conf->secret_key = prev->secret_key;
 	}
 
+	if (conf->encryption_iv_seed == NULL)
+	{
+		conf->encryption_iv_seed = prev->encryption_iv_seed;
+	}
+
 	if (conf->base_url == NULL)
 	{
 		conf->base_url = prev->base_url;
@@ -199,6 +205,17 @@ ngx_http_vod_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 	}
 
 	ngx_conf_merge_value(conf->ignore_edit_list, prev->ignore_edit_list, 0);
+	ngx_conf_merge_value(conf->parse_hdlr_name, prev->parse_hdlr_name, 0);
+
+	conf->parse_flags = 0;
+	if (!conf->ignore_edit_list)
+	{
+		conf->parse_flags |= PARSE_FLAG_EDIT_LIST;
+	}
+	if (conf->parse_hdlr_name)
+	{
+		conf->parse_flags |= PARSE_FLAG_HDLR_NAME;
+	}
 
 	if (conf->upstream_extra_args == NULL)
 	{
@@ -264,6 +281,7 @@ ngx_http_vod_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 	ngx_conf_merge_str_value(conf->clip_to_param_name, prev->clip_to_param_name, "clipTo");
 	ngx_conf_merge_str_value(conf->clip_from_param_name, prev->clip_from_param_name, "clipFrom");
 	ngx_conf_merge_str_value(conf->tracks_param_name, prev->tracks_param_name, "tracks");
+	ngx_conf_merge_str_value(conf->time_shift_param_name, prev->time_shift_param_name, "shift");
 	ngx_conf_merge_str_value(conf->speed_param_name, prev->speed_param_name, "speed");
 	ngx_conf_merge_str_value(conf->lang_param_name, prev->lang_param_name, "lang");
 
@@ -338,6 +356,13 @@ ngx_http_vod_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 	{
 		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
 			"\"vod_tracks_param_name\" should not be more than %d characters", MAX_URI_PARAM_NAME_LEN);
+		return NGX_CONF_ERROR;
+	}
+
+	if (conf->time_shift_param_name.len > MAX_URI_PARAM_NAME_LEN)
+	{
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+			"\"vod_time_shift_param_name\" should not be more than %d characters", MAX_URI_PARAM_NAME_LEN);
 		return NGX_CONF_ERROR;
 	}
 
@@ -909,6 +934,13 @@ ngx_command_t ngx_http_vod_commands[] = {
 	offsetof(ngx_http_vod_loc_conf_t, secret_key),
 	NULL },
 
+	{ ngx_string("vod_encryption_iv_seed"),
+	NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+	ngx_http_set_complex_value_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_vod_loc_conf_t, encryption_iv_seed),
+	NULL },
+
 	{ ngx_string("vod_base_url"),
 	NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
 	ngx_http_set_complex_value_slot,
@@ -978,6 +1010,13 @@ ngx_command_t ngx_http_vod_commands[] = {
 	ngx_conf_set_flag_slot,
 	NGX_HTTP_LOC_CONF_OFFSET,
 	offsetof(ngx_http_vod_loc_conf_t, ignore_edit_list),
+	NULL },
+
+	{ ngx_string("vod_parse_hdlr_name"),
+	NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+	ngx_conf_set_flag_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_vod_loc_conf_t, parse_hdlr_name),
 	NULL },
 
 	// upstream parameters - only for mapped/remote modes
@@ -1234,6 +1273,13 @@ ngx_command_t ngx_http_vod_commands[] = {
 	offsetof(ngx_http_vod_loc_conf_t, tracks_param_name),
 	NULL },
 
+	{ ngx_string("vod_time_shift_param_name"),
+	NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
+	ngx_conf_set_str_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_vod_loc_conf_t, time_shift_param_name),
+	NULL },
+
 	{ ngx_string("vod_speed_param_name"),
 	NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_TAKE1,
 	ngx_conf_set_str_slot,
@@ -1276,6 +1322,7 @@ ngx_command_t ngx_http_vod_commands[] = {
 #include "ngx_http_vod_hls_commands.h"
 #include "ngx_http_vod_mss_commands.h"
 #include "ngx_http_vod_thumb_commands.h"
+#include "ngx_http_vod_volume_map_commands.h"
 
 	ngx_null_command
 };
