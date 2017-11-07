@@ -4,6 +4,7 @@
 #include "ngx_http_vod_mss.h"
 #include "ngx_http_vod_thumb.h"
 #include "ngx_http_vod_volume_map.h"
+#include "ngx_http_vod_transcode.h"
 
 const ngx_http_vod_submodule_t* submodules[] = {
 	&dash,
@@ -13,6 +14,7 @@ const ngx_http_vod_submodule_t* submodules[] = {
 #if (NGX_HAVE_LIB_AV_CODEC)
 	&thumb,
 	&volume_map,
+ &transcode,
 #endif // (NGX_HAVE_LIB_AV_CODEC)
 	NULL,
 };
