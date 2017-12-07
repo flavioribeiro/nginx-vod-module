@@ -1,7 +1,4 @@
 #include "mp4_cbcs_encrypt.h"
-
-#if (VOD_HAVE_OPENSSL_EVP)
-
 #include "mp4_write_stream.h"
 #include "mp4_defs.h"
 #include "../write_buffer.h"
@@ -10,6 +7,7 @@
 #include "../hevc_parser.h"
 #include "../avc_parser.h"
 #include "../avc_defs.h"
+#include "../aes_defs.h"
 #include "../udrm.h"
 
 // constants
@@ -711,7 +709,7 @@ mp4_cbcs_encrypt_video_get_fragment_writer(
 	// init writing for the first track
 	if (!mp4_cbcs_encrypt_move_to_next_frame(&stream_state->base, NULL))
 	{
-		return VOD_OK;
+		return VOD_NOT_FOUND;
 	}
 
 	rc = mp4_cbcs_encrypt_video_init_track(stream_state);
@@ -836,7 +834,10 @@ mp4_cbcs_encrypt_audio_get_fragment_writer(
 	segment_writer->write_head = NULL;
 	segment_writer->context = stream_state;
 
-	mp4_cbcs_encrypt_move_to_next_frame(stream_state, NULL);	// ignore the result
+	if (!mp4_cbcs_encrypt_move_to_next_frame(stream_state, NULL))
+	{
+		return VOD_NOT_FOUND;
+	}
 
 	return VOD_OK;
 }
@@ -888,7 +889,7 @@ mp4_cbcs_encrypt_get_writers(
 
 	vod_memcpy(state->iv, iv, sizeof(state->iv));
 	vod_memcpy(state->key, key, sizeof(state->key));
-	state->flush_left = media_set->total_track_count;
+	state->flush_left = 0;
 
 	for (i = 0; i < media_set->total_track_count; i++)
 	{
@@ -917,27 +918,17 @@ mp4_cbcs_encrypt_get_writers(
 
 		if (rc != VOD_OK)
 		{
+			if (rc == VOD_NOT_FOUND)
+			{
+				continue;
+			}
+
 			return rc;
 		}
+
+		state->flush_left++;
 	}
 
 	*result = segment_writers;
 	return VOD_OK;
 }
-
-#else
-
-// empty stubs
-vod_status_t
-mp4_cbcs_encrypt_get_writers(
-	request_context_t* request_context,
-	media_set_t* media_set,
-	segment_writer_t* segment_writer,
-	const u_char* key,
-	const u_char* iv,
-	segment_writer_t** result)
-{
-	return VOD_UNEXPECTED;
-}
-
-#endif //(VOD_HAVE_OPENSSL_EVP)

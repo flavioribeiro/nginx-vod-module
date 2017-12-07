@@ -54,7 +54,7 @@ without the overhead of short segments for the whole duration of the video
 
 * Clipping of MP4 files for progressive download playback
 
-* Thumbnail capture (requires libavcodec)
+* Thumbnail capture (requires libavcodec) and resize (requires libswscale)
 
 * Volume map (requires libavcodec) - returns a CSV containing the volume level in each interval
 
@@ -115,6 +115,8 @@ Optional recommended settings:
 Debug settings:
 1. `--with-debug` - enable debug messages (also requires passing `debug` in the `error_log` directive in nginx.conf).
 2. `--with-cc-opt="-O0"` - disable compiler optimizations (for debugging with gdb)
+
+Note: currently, nginx 1.13 or higher is not supported (see https://github.com/kaltura/nginx-vod-module/issues/645), please use version 1.12.
 
 ### Installation
 
@@ -214,7 +216,7 @@ Where:
   * hls master playlist - master.m3u8
   * hls media playlist - index.m3u8
   * mss - manifest
-  * thumb - `thumb-<offset>.jpg` (offset is the thumbnail video offset in milliseconds)
+  * thumb - `thumb-<offset>[<resizeparams>].jpg` (offset is the thumbnail video offset in milliseconds)
   * volume_map - `volume_map.csv`
 * seqparams - can be used to select specific sequences by id (provided in the mapping JSON), e.g. master-sseq1.m3u8.
 * fileparams - can be used to select specific sequences by index when using multi URLs.
@@ -227,6 +229,9 @@ Where:
 	The a/v parameters can be combined with f/s, e.g. f1-v1-f2-a1 = video1 of file1 + audio1 of file2, f1-f2-v1 = video1 of file1 + video1 of file2.
 * langparams - can be used to filter audio tracks/subtitles according to their language (ISO639-3 code).
 	For example, master-leng.m3u8 will return only english audio tracks.
+* resizeparams - can be used to resize the returned thumbnail image. For example, thumb-1000-w150-h100.jpg captures a thumbnail
+	1 second into the video, and resizes it to 150x100. If one of the dimensions is omitted, its value is set so that the 
+	resulting image will retain the aspect ratio of the video frame.
 
 ### Mapping response format
 
@@ -238,14 +243,15 @@ This section contains a few simple examples followed by a reference of the suppo
 But first, a couple of definitions:
 
 1. `Source Clip` - a set of audio and/or video frames (tracks) extracted from a single media file
-2. `Filter` - a manipulation that can be applied on audio/video frames. The following filters are supported: 
+2. `Generator` - a component that can generate audio/video frames. Currently, the only supported generator is the silence generator.
+3. `Filter` - a manipulation that can be applied on audio/video frames. The following filters are supported: 
   * rate (speed) change - applies to both audio and video
   * audio volume change
   * mix - can be used to merge several audio tracks together, or to merge the audio of source A with the video of source B
-2. `Clip` - the result of applying zero or more filters on a set of source clips
-3. `Dynamic Clip` - a clip whose contents is not known in advance, e.g. targeted ad content
-4. `Sequence` - a set of clips that should be played one after the other. 
-5. `Set` - several sequences that play together as an adaptive set, each sequence must have the same number of clips.
+4. `Clip` - the result of applying zero or more filters on a set of source clips
+5. `Dynamic Clip` - a clip whose contents is not known in advance, e.g. targeted ad content
+6. `Sequence` - a set of clips that should be played one after the other. 
+7. `Set` - several sequences that play together as an adaptive set, each sequence must have the same number of clips.
 
 #### Simple mapping
 
@@ -447,6 +453,10 @@ Optional fields:
 * `notifications` - array of notification objects (see below), when a segment is requested,
 	all the notifications that fall between the start/end times of the segment are fired.
 	the notifications must be ordered in an increasing offset order.
+* `clipFrom` - integer, contains a timestamp indicating where the returned stream should start.
+	Setting this parameter is equivalent to passing /clipFrom/ on the URL.
+* `clipTo` - integer, contains a timestamp indicating where the returned stream should end.
+	Setting this parameter is equivalent to passing /clipTo/ on the URL.
 	
 Live fields:
 * `firstClipTime` - integer, mandatory for all live playlists unless `clipTimes` is specified.
@@ -514,6 +524,7 @@ Mandatory fields:
 	* rateFilter
 	* mixFilter
 	* gainFilter
+	* silence
 	* concat
 	* dynamic
 
@@ -708,15 +719,35 @@ The response of the DRM server is a JSON, with the following format:
 * `iv` - optional base64 encoded initialization vector (128 bit). The IV is currently used only in HLS (FairPlay), 
 	in the other protocols an IV is generated automatically by nginx-vod-module.
 
-##### Sample configuration
+##### Sample configurations
 
-Below is a sample configuration for Apple FairPlay HLS:
+Apple FairPlay HLS:
 ```
 location ~ ^/fpshls/p/\d+/(sp/\d+/)?serveFlavor/entryId/([^/]+)/(.*) {
 	vod hls;
 	vod_hls_encryption_method sample-aes;
 	vod_hls_encryption_key_uri "skd://entry-$2";
 	vod_hls_encryption_key_format "com.apple.streamingkeydelivery";
+	vod_hls_encryption_key_format_versions "1";
+
+	vod_drm_enabled on;
+	vod_drm_request_uri "/udrm/system/ovp/$vod_suburi";
+
+	vod_last_modified_types *;
+	add_header Access-Control-Allow-Headers '*';
+	add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range';
+	add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
+	add_header Access-Control-Allow-Origin '*';
+	expires 100d;
+}
+```
+
+Common Encryption HLS:
+```
+location ~ ^/cenchls/p/\d+/(sp/\d+/)?serveFlavor/entryId/([^/]+)/(.*) {
+	vod hls;
+	vod_hls_encryption_method sample-aes-cenc;
+	vod_hls_encryption_key_format "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed";
 	vod_hls_encryption_key_format_versions "1";
 
 	vod_drm_enabled on;
@@ -826,6 +857,19 @@ If the value is positive, nginx vod returns a range of maximum `vod_live_window_
 If the value is negative, nginx vod returns a range of maximum `-vod_live_window_duration` milliseconds from the end of the mapping json.
 If the value is set to zero, the live manifest will contain all the segments that are fully contained in the mapping json time frame.
 
+#### vod_force_playlist_type_vod
+* **syntax**: `vod_force_playlist_type_vod on/off`
+* **default**: `off
+* **context**: `http`, `server`, `location`
+
+Generate a vod stream even when the media set has `playlistType=live`. 
+Enabling this setting has the following effects:
+1. Frame timestamps will be continuous and start from zero
+2. Segment indexes will start from one
+3. In case of HLS, the returned manifest will have both `#EXT-X-PLAYLIST-TYPE:VOD` and `#EXT-X-ENDLIST`
+
+This can be useful for clipping vod sections out of a live stream.
+
 #### vod_force_continuous_timestamps
 * **syntax**: `vod_force_continuous_timestamps on/off`
 * **default**: `off
@@ -881,6 +925,15 @@ an HLS manifest will contain #EXTINF:10
 * accurate - reports the exact duration of the segment, taking into account the frame durations, e.g. for a 
 frame rate of 29.97 and 10 second segments it will report the first segment as 10.01. accurate mode also
 takes into account the key frame alignment, in case `vod_align_segments_to_key_frames` is on
+
+### vod_media_set_override_json
+* **syntax**: `vod_media_set_override_json json`
+* **default**: `{}`
+* **context**: `http`, `server`, `location`
+
+This parameter provides a way to override portions of the media set JSON (mapped mode only).
+For example, `vod_media_set_override_json '{"clipTo":20000}'` clips the media set to 20 sec.
+The parameter value can contain variables.
 
 ### Configuration directives - upstream
 
@@ -1432,7 +1485,7 @@ Turning this parameter off reduces the packaging overhead, however the default i
 * **default**: `none`
 * **context**: `http`, `server`, `location`
 
-Sets the encryption method of HLS segments, allowed values are: none (default), aes-128, sample-aes.
+Sets the encryption method of HLS segments, allowed values are: none (default), aes-128, sample-aes, sample-aes-cenc.
 
 #### vod_hls_force_unmuxed_segments
 * **syntax**: `vod_hls_force_unmuxed_segments on/off`
